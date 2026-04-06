@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Misal | Graduale Nostrum</title>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --primary: #2C211F;      /* Café Imperial */
+            --accent: #B8860B;       /* Oro */
+            --bg: #FDFBF7;           /* Crema Pergamino */
+            --surface: #FFFFFF;
+            --text: #3E322E;
+            --text-light: #8E7C77;
+            --shadow: 0 12px 40px rgba(44, 33, 31, 0.08);
+            --border: 1px solid rgba(184, 134, 11, 0.15);
+        }
+
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: var(--bg); 
+            color: var(--text); 
+            margin: 0; 
+            padding-bottom: 50px;
+        }
+
+        /* Encabezado Estilo Graduale */
+        header { 
+            background: var(--primary); 
+            color: white; 
+            padding: 3rem 1.5rem 4rem 1.5rem; 
+            text-align: center; 
+            border-bottom-left-radius: 45px; 
+            border-bottom-right-radius: 45px; 
+            box-shadow: 0 15px 30px rgba(0,0,0,0.15);
+            position: relative;
+            z-index: 10;
+        }
+
+        header h1 { 
+            font-family: 'Cinzel', serif; 
+            font-size: 1.4rem; 
+            margin: 0; 
+            letter-spacing: 3px; 
+            color: var(--accent);
+        }
+
+        .liturgical-info {
+            margin-top: 10px;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.9;
+            font-weight: 300;
+        }
+
+        /* Contenedor Principal */
+        .container { 
+            padding: 0 20px; 
+            max-width: 650px; 
+            margin: -35px auto 0 auto; 
+            position: relative;
+            z-index: 20;
+        }
+
+        /* Cards de Lecturas */
+        .card { 
+            background: var(--surface); 
+            padding: 35px 25px; 
+            border-radius: 35px; 
+            box-shadow: var(--shadow); 
+            border: var(--border);
+            margin-bottom: 25px;
+            transition: transform 0.3s ease;
+        }
+
+        .tag { 
+            font-family: 'Cinzel', serif; 
+            color: var(--accent); 
+            font-weight: 700; 
+            font-size: 0.75rem; 
+            text-transform: uppercase; 
+            display: block;
+            margin-bottom: 12px;
+            letter-spacing: 1.5px;
+        }
+
+        h2 { 
+            font-family: 'Cinzel', serif; 
+            font-size: 1.25rem; 
+            margin: 0 0 20px 0; 
+            color: var(--primary); 
+            line-height: 1.3;
+        }
+
+        .content { 
+            font-size: 1.1rem; 
+            line-height: 1.8; 
+            text-align: justify; 
+            color: var(--text);
+            font-weight: 400;
+        }
+
+        .versiculo {
+            color: var(--accent);
+            font-weight: 600;
+            margin-right: 5px;
+        }
+
+        /* Estado de Carga */
+        .loader {
+            text-align: center;
+            padding: 100px 20px;
+            color: var(--accent);
+        }
+
+        .loader i { font-size: 2.5rem; margin-bottom: 15px; }
+
+        /* Botón Flotante */
+        .fab {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 60px;
+            height: 60px;
+            background: var(--primary);
+            color: var(--accent);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            border: 2px solid var(--accent);
+            cursor: pointer;
+            z-index: 100;
+        }
+
+        @media (max-width: 480px) {
+            header h1 { font-size: 1.2rem; }
+            .card { padding: 25px 20px; border-radius: 30px; }
+            .content { font-size: 1rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1 id="celebracion">MISAL DIARIO</h1>
+        <div class="liturgical-info" id="fecha-texto">Cargando calendario litúrgico...</div>
+    </header>
+
+    <div class="container" id="main-content">
+        <div id="loading" class="loader">
+            <i class="fas fa-cross fa-spin"></i>
+            <p style="font-family: 'Cinzel'; font-size: 0.9rem;">Buscando Lecturas...</p>
+        </div>
+
+        <div id="lecturas-list"></div>
+    </div>
+
+    <div class="fab" onclick="cargarLecturas()">
+        <i class="fas fa-calendar-day"></i>
+    </div>
+
+    <script>
+        // Nota: Usamos una API de código abierto para obtener lecturas reales
+        const API_URL = "https://api.evangelizo.org/v1/content/full/spa/daily/";
+
+        async function cargarLecturas() {
+            const listado = document.getElementById('lecturas-list');
+            const loading = document.getElementById('loading');
+            const infoFecha = document.getElementById('fecha-texto');
+            const celebracion = document.getElementById('celebracion');
+
+            loading.style.display = 'block';
+            listado.innerHTML = '';
+
+            try {
+                // Formatear fecha para la API (YYYYMMDD)
+                const hoy = new Date();
+                const fechaCodificada = hoy.toISOString().slice(0,10).replace(/-/g, "");
+                
+                const response = await fetch(`${API_URL}${fechaCodificada}`);
+                const data = await response.json();
+
+                // Actualizar Textos de Cabecera
+                celebracion.innerText = data.liturgical_title || "LECTURAS DEL DÍA";
+                infoFecha.innerText = hoy.toLocaleDateString('es-ES', { 
+                    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' 
+                });
+
+                // Filtrar y mostrar lecturas
+                // La API devuelve un array, mapeamos las principales: Primera, Salmo, Evangelio
+                data.readings.forEach((lectura, index) => {
+                    let tituloLabel = "Lectura";
+                    if(lectura.type === "reading") tituloLabel = (index === 0) ? "Primera Lectura" : "Segunda Lectura";
+                    if(lectura.type === "psalm") tituloLabel = "Salmo Responsorial";
+                    if(lectura.type === "gospel") tituloLabel = "Santo Evangelio";
+
+                    const card = document.createElement('div');
+                    card.className = 'card';
+                    card.innerHTML = `
+                        <span class="tag">${tituloLabel}</span>
+                        <h2>${lectura.reference}</h2>
+                        <div class="content">${limpiarTexto(lectura.text)}</div>
+                    `;
+                    listado.appendChild(card);
+                });
+
+                loading.style.display = 'none';
+
+            } catch (error) {
+                console.error(error);
+                loading.innerHTML = `
+                    <i class="fas fa-exclamation-circle"></i>
+                    <p>No se pudieron cargar las lecturas.<br>Inténtalo más tarde.</p>
+                `;
+            }
+        }
+
+        // Función para limpiar códigos extraños que a veces vienen en APIs litúrgicas
+        function limpiarTexto(texto) {
+            return texto
+                .replace(/\[|\]/g, "")
+                .replace(/\n/g, "<br>");
+        }
+
+        // Ejecutar al iniciar
+        window.onload = cargarLecturas;
+    </script>
+</body>
+</html>
+
