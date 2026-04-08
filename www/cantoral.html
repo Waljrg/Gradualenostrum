@@ -18,6 +18,8 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tonaljs/tonal/browser/tonal.min.js"></script>
+    
     <style>
         :root {
             --primary: #2C211F; 
@@ -484,12 +486,17 @@
             <h2 style="margin:0; font-family:'Cinzel'; font-size: 1.2rem;">Editor de Canto</h2>
         </div>
         <div class="form-container">
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
-                <button class="btn btn-gold" style="justify-content:center; font-size: 0.7rem;" onclick="document.getElementById('imageInput').click()"><i class="fas fa-camera"></i> ESCANEAR</button>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
                 <button class="btn btn-dark" style="justify-content:center; font-size: 0.7rem;" onclick="document.getElementById('pdfInput').click()"><i class="fas fa-file-pdf"></i> PDF</button>
                 <button class="btn btn-gold" id="audioBtn" style="justify-content:center; font-size: 0.7rem;" onclick="document.getElementById('audioInput').click()"><i class="fas fa-microphone"></i> AUDIO</button>
             </div>
-            <input type="file" id="imageInput" accept="image/*" style="display:none" onchange="importarImagen(this)">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <button class="btn btn-dark" style="justify-content:center; font-size: 0.7rem;" onclick="document.getElementById('cameraInput').click()"><i class="fas fa-camera"></i> CÁMARA</button>
+                <button class="btn btn-gold" style="justify-content:center; font-size: 0.7rem;" onclick="document.getElementById('galleryInput').click()"><i class="fas fa-image"></i> GALERÍA</button>
+            </div>
+
+            <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none" onchange="importarImagen(this)">
+            <input type="file" id="galleryInput" accept="image/*" style="display:none" onchange="importarImagen(this)">
             <input type="file" id="pdfInput" accept="application/pdf" style="display:none" onchange="importarPDF(this)">
             <input type="file" id="audioInput" accept="audio/*" style="display:none" onchange="gestionarSubidaAudio(this)">
             
@@ -650,10 +657,93 @@
     const DIRECTOR_EMAIL = "waljrg@gmail.com"; 
     let isAdmin = false;
 
-    // VARIABLES DE DIRIGIR
+    // VARIABLES DE DIRIGIR Y WEBRTC
     let modoDirectorActivo = false;
     let siguiendoDirector = false;
     let unsuscribeDirector = null;
+    let localConnection = null;
+    let remoteConnection = null;
+    let sendChannel = null;
+    let receiveChannel = null;
+
+    // --- IMPLEMENTACIÓN WEBRTC ---
+    const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+    async function initWebRTCDirector() {
+        localConnection = new RTCPeerConnection(rtcConfig);
+        sendChannel = localConnection.createDataChannel("syncChannel");
+        
+        localConnection.onicecandidate = e => {
+            if (e.candidate) {
+                db.collection("webrtc").doc("signals").collection("candidates").add(e.candidate.toJSON());
+            }
+        };
+
+        const offer = await localConnection.createOffer();
+        await localConnection.setLocalDescription(offer);
+
+        await db.collection("webrtc").doc("signals").set({ offer: { type: offer.type, sdp: offer.sdp } });
+
+        // Escuchar respuesta
+        db.collection("webrtc").doc("signals").onSnapshot(async doc => {
+            const data = doc.data();
+            if (data?.answer && !localConnection.currentRemoteDescription) {
+                const answer = new RTCSessionDescription(data.answer);
+                await localConnection.setRemoteDescription(answer);
+            }
+        });
+    }
+
+    async function initWebRTCMusico() {
+        remoteConnection = new RTCPeerConnection(rtcConfig);
+        
+        remoteConnection.ondatachannel = e => {
+            receiveChannel = e.channel;
+            receiveChannel.onmessage = e => {
+                const data = JSON.parse(e.data);
+                procesarSincronia(data);
+            };
+        };
+
+        remoteConnection.onicecandidate = e => {
+            if (e.candidate) {
+                db.collection("webrtc").doc("signals").collection("candidates").add(e.candidate.toJSON());
+            }
+        };
+
+        const signalDoc = await db.collection("webrtc").doc("signals").get();
+        const offer = signalDoc.data().offer;
+        await remoteConnection.setRemoteDescription(new RTCSessionDescription(offer));
+
+        const answer = await remoteConnection.createAnswer();
+        await remoteConnection.setLocalDescription(answer);
+
+        await db.collection("webrtc").doc("signals").update({ answer: { type: answer.type, sdp: answer.sdp } });
+
+        db.collection("webrtc").doc("signals").collection("candidates").onSnapshot(snap => {
+            snap.docChanges().forEach(change => {
+                if (change.type === "added") {
+                    remoteConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+                }
+            });
+        });
+    }
+
+    function enviarSincroniaWebRTC(payload) {
+        if (sendChannel && sendChannel.readyState === "open") {
+            sendChannel.send(JSON.stringify(payload));
+        }
+    }
+
+    function procesarSincronia(data) {
+        const index = cantos.findIndex(c => c.id === data.cantoId);
+        if(index !== -1) {
+            if(currentCantoId !== index || currentTranspose !== data.transpose) {
+                currentTranspose = data.transpose;
+                verDetalle(index);
+            }
+        }
+    }
 
     const defTiempos = ["Ordinario", "Adviento", "Navidad", "Cuaresma", "Pascua", "Triduo Pascual", "Pentecostés", "Santos", "Purísima", "Virgen María", "San Francisco", "Sagrado Corazón", "Ordinario de la Misa", "Ad Libitum"];
     const defMomentos = ["Entrada", "Kyrie", "Gloria", "Salmos", "Aleluya", "Honor y Gloria", "Ofertorio", "Sanctus", "Doxología", "Padre Nuestro", "Cordero", "Comunión", "Adoración A Jesús Sacramentado", "Salida", "Alabanzas", "Difuntos", "Varios"];
@@ -717,12 +807,12 @@
         
         if(modoDirectorActivo) {
             logo.classList.add('sync-active');
-            // Al activar mando, si ya estamos en un detalle, sincronizar de una vez
+            initWebRTCDirector(); // Activa WebRTC como Director
             if(currentCantoId !== null) sincronizarConMúsicos();
         } else {
             logo.classList.remove('sync-active');
-            // Limpiar sesión al desactivar mando si se desea
             db.collection("sesion").doc("activa").delete();
+            if(localConnection) { localConnection.close(); localConnection = null; }
         }
     }
 
@@ -732,34 +822,35 @@
         if(siguiendoDirector) {
             btn.innerText = "SIGUIENDO AL DIRECTOR...";
             btn.style.background = "#2e7d32";
+            initWebRTCMusico(); // Activa WebRTC como Músico
+            
             unsuscribeDirector = db.collection("sesion").doc("activa").onSnapshot(doc => {
                 if(doc.exists && !modoDirectorActivo) {
                     const data = doc.data();
-                    const index = cantos.findIndex(c => c.id === data.cantoId);
-                    if(index !== -1) {
-                        // Solo refrescar si es un cambio real para evitar bucles
-                        if(currentCantoId !== index || currentTranspose !== data.transpose) {
-                            currentTranspose = data.transpose;
-                            verDetalle(index);
-                        }
-                    }
+                    procesarSincronia(data);
                 }
             });
         } else {
             btn.innerText = "SEGUIR DIRECTOR";
             btn.style.background = "var(--accent)";
             if(unsuscribeDirector) { unsuscribeDirector(); unsuscribeDirector = null; }
+            if(remoteConnection) { remoteConnection.close(); remoteConnection = null; }
         }
     }
 
     async function sincronizarConMúsicos() {
         if(modoDirectorActivo && currentCantoId !== null) {
             const c = cantos[currentCantoId];
-            await db.collection("sesion").doc("activa").set({
+            const payload = {
                 cantoId: c.id,
                 transpose: currentTranspose,
                 timestamp: Date.now()
-            });
+            };
+            
+            // Backup por Firestore
+            await db.collection("sesion").doc("activa").set(payload);
+            // Sincronía Instantánea por WebRTC
+            enviarSincroniaWebRTC(payload);
         }
     }
 
@@ -1205,12 +1296,16 @@
     async function importarImagen(input) {
         const file = input.files[0]; if (!file) return;
         const editorLetra = document.getElementById('letra');
+        const originalText = editorLetra.value;
         editorLetra.value = "⏳ Escaneando...";
         try {
             const worker = await getTesseractWorker();
             const { data: { text } } = await worker.recognize(file);
             editorLetra.value = text;
-        } catch (e) { editorLetra.value = "❌ Error"; } finally { input.value = ""; }
+        } catch (e) { 
+            editorLetra.value = originalText;
+            alert("Error al escanear imagen.");
+        } finally { input.value = ""; }
     }
 
     window.onpopstate = function(event) { if (viewStack.length > 1) { viewStack.pop(); showView(viewStack[viewStack.length - 1], true); } };
@@ -1339,7 +1434,7 @@
         defTiempos.sort().forEach(cat => { const imgFile = iconosTiempos[cat] || "logo.png"; tGrid.innerHTML += `<div class="card" onclick="verCategoria('${cat}', 'tiempo')"><img src="Iconos/${imgFile}" alt="${cat}"></div>`; selectTiempo.innerHTML += `<option value="${cat}">${cat}</option>`; });
         const momentosConfig = [{ n: "Entrada", i: "entrada.png" }, { n: "Kyrie", i: "kyrie.png" }, { n: "Gloria", i: "gloria.png" }, { n: "Salmos", i: "salmos.png" }, { n: "Aleluya", i: "aleluya.png" }, { n: "Honor y Gloria", i: "honor.png" }, { n: "Ofertorio", i: "ofertorio.png" }, { n: "Sanctus", i: "santo.png" }, { n: "Doxología", i: "doxologia.png" }, { n: "Padre Nuestro", i: "padre.png" }, { n: "Cordero", i: "cordero.png" }, { n: "Comunión", i: "comunion.png" }, { n: "Adoración A Jesús Sacramentado", i: "adoración.png" }, { n: "Salida", i: "salida.png" }, { n: "Alabanzas", i: "alabanzas.png" }, { n: "Difuntos", i: "difuntos.png" }, { n: "Varios", i: "varios.png" }];
         momentosConfig.forEach(m => { mGrid.innerHTML += `<div class="card" onclick="verCategoria('${m.n}', 'momento')"><img src="Iconos/${m.i}" alt="${m.n}"></div>`; selectMomento.innerHTML += `<option value="${m.n}">${m.n}</option>`; fMomento.innerHTML += `<option value="${m.n}">${m.n}</option>`; });
-        opcionesTonos.forEach(t => { selectTono.innerHTML += `<option value="${t}">${t}</option>`; selectTonoSec.innerHTML += `<option value="${t}">${t}</option>`; fTono.innerHTML += `<option value="${t}">${t}</option>`; fTonoSec.innerHTML += `<option value="${t}">${t}</option>`; });
+        opcionesTonos.forEach(t => { selectTono.innerHTML += `<option value="${t}">${t}</option>`; selectTonoSec.innerHTML += `<option value="${t}">${t}</option>`; fTono.innerHTML += `<option value="${t}">${t}</option>`; selectTonoSec.innerHTML += `<option value="${t}">${t}</option>`; });
         
         selectTonoPers.innerHTML = '<option value="">Normal</option>';
         fTonoPers.innerHTML = '<option value="">Todos</option>';
@@ -1350,11 +1445,22 @@
         selectTonoPers.onchange = actualizarAcordesInteligentes;
     }
 
-    function transposeNote(nota, semitonos) {
-        let notaBase = americanas[nota] || nota; let index = escala.indexOf(notaBase);
-        if (index === -1) return nota; let newIndex = (index + semitonos) % 12;
-        if (newIndex < 0) newIndex += 12; let resultado = escala[newIndex];
-        return isAmerican ? resultado : (latinas[resultado] || resultado);
+    // --- INTEGRACIÓN DE TONAL.JS PARA TRANSPOSICIÓN Y RECONOCIMIENTO ---
+    function transposeNote(notaOriginal, semitonos) {
+        if (!notaOriginal) return "";
+        try {
+            // Normalizar nota (convertir Do -> C, etc.)
+            let notaC = americanas[notaOriginal] || notaOriginal;
+            // Transponer usando Tonal
+            let nuevaNota = Tonal.Note.transpose(notaC, Tonal.Interval.fromSemitones(semitonos));
+            // Simplificar enarmónicos (ej: G# -> Ab si es necesario para legibilidad)
+            nuevaNota = Tonal.Note.simplify(nuevaNota);
+            
+            if (isAmerican) return nuevaNota;
+            return latinas[nuevaNota] || nuevaNota;
+        } catch (e) {
+            return notaOriginal;
+        }
     }
 
     // FUNCIÓN PARA ALTERNAR MODO VISTA
@@ -1376,9 +1482,9 @@
     function renderTexto() {
         const c = (currentCantoId !== null) ? cantos[currentCantoId] : tempCanto; if (!c) return;
         
-        // REGEX OPTIMIZADO: 
-        const regexChords = /(?:\[(Do|Re|Mi|Fa|Sol|La|Si|[A-G])(#|b)?(maj|min|m|M|aug|dim|sus|add|ø|maj?\d+|min?\d+|\d+|[\+\-\(\)])*(\/(Do|Re|Mi|Fa|Sol|La|Si|[A-G])(#|b)?)?\])|(?:\b(Do|Re|Mi|Fa|Sol|La|Si|[A-G])(#|b)?(maj|min|m|M|aug|dim|sus|add|ø|maj?\d+|min?\d+|\d+|[\+\-\(\)])*(\/(Do|Re|Mi|Fa|Sol|La|Si|[A-G])(#|b)?)?\b)/g;
-        
+        // --- REGEX ROBUSTO PARA ACORDES ---
+        const regexChords = /(?<=^|[\s\[\(\/,])([A-G]|Do|Re|Mi|Fa|Sol|La|Si)(#|b|&)?(maj|min|m|M|aug|dim|sus|add|ø|maj?\d+|min?\d+|\d+|[\+\-\(\)])*(\/([A-G]|Do|Re|Mi|Fa|Sol|La|Si)(#|b|&)?(maj|min|m|M|aug|dim|sus|add|ø|maj?\d+|min?\d+|\d+|[\+\-\(\)])*)?(?=$|[\s\]\)\.,\?])/g;
+
         const sectionRules = [
             { regex: /^INICIO:/i, class: "m-inicio" },
             { regex: /^CORO:/i, class: "m-coro" },
@@ -1386,6 +1492,8 @@
             { regex: /^PUENTE:/i, class: "m-puente" },
             { regex: /^FINAL:/i, class: "m-final" }
         ];
+
+        const palabrasExcluidas = ["A", "La", "Si", "Do", "así", "mi", "re"];
 
         let isChorusMode = false;
         let htmlProcesado = c.letra.split('\n').map(linea => {
@@ -1399,43 +1507,46 @@
                 }
             }
 
-            // PROCESAR ACORDES
             const matchesLine = linea.match(regexChords) || [];
-            const minusculas = (linea.match(/[a-z]/g) || []).length;
-            const esLineaDeAcordes = matchesLine.length > 0 && (minusculas < 4 || matchesLine.length > 2 || linea.includes('['));
+            const countAlfabeticos = (linea.match(/[a-z]/gi) || []).length;
+            const countEspacios = (linea.match(/\s/g) || []).length;
+            
+            const esLineaDeAcordes = matchesLine.length > 0 && (
+                (countAlfabeticos < (matchesLine.join('').length + 5)) || 
+                (countEspacios > linea.length * 0.4) || 
+                linea.includes('[')
+            );
 
-            let procesada = linea.replace(regexChords, (match, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10) => {
-                const esCorchete = match.startsWith('[');
-                const limpio = match.replace(/[\[\]]/g, '');
-                
-                if (!esCorchete && !esLineaDeAcordes) {
-                    const palabrasComunes = ["Do", "Re", "Mi", "Fa", "Sol", "La", "Si", "A"];
-                    if (palabrasComunes.includes(limpio)) return match;
+            let procesada = linea.replace(regexChords, (match) => {
+                const contenido = match.trim();
+                if (!esLineaDeAcordes && palabrasExcluidas.includes(contenido)) {
+                    return match;
                 }
 
-                const partes = limpio.split('/');
-                const acordePrincipal = partes[0]; const bajo = partes[1];
+                const partes = contenido.split('/');
+                const acordePrincipal = partes[0]; 
+                const bajo = partes[1];
                 
-                const procesarNotaUnica = (textoNota) => {
-                    const notaBaseMatch = textoNota.match(/^(Do|Re|Mi|Fa|Sol|La|Si|[A-G])(#|b)?/);
-                    if (!notaBaseMatch) return textoNota;
-                    const notaBase = notaBaseMatch[0]; const extension = textoNota.substring(notaBase.length);
-                    return transposeNote(notaBase, currentTranspose) + extension;
+                const procesarNotaConExtension = (textoAcorde) => {
+                    const notaMatch = textoAcorde.match(/^(Do|Re|Mi|Fa|Sol|La|Si|[A-G])(#|b|&)?/);
+                    if (notaMatch) {
+                        let notaBase = notaMatch[0];
+                        let extension = textoAcorde.substring(notaBase.length);
+                        return transposeNote(notaBase, currentTranspose) + extension;
+                    }
+                    return textoAcorde;
                 };
 
-                let resultado = procesarNotaUnica(acordePrincipal);
-                if (bajo) resultado += "/" + procesarNotaUnica(bajo);
+                let resultado = procesarNotaConExtension(acordePrincipal);
+                if (bajo) resultado += "/" + procesarNotaConExtension(bajo);
+                
                 return `<span class="chord">${resultado}</span>`;
             });
             
-            procesada = procesada.replace(/[\[\]]/g, '');
-
-            // PROCESAR ÉNFASIS (TEXTO ENTRE *)
             procesada = procesada.replace(/\*(.*?)\*/g, (match, p1) => {
                 return `<span class="section-marker m-enfasis">${p1.toUpperCase()}</span>`;
             });
 
-            // PROCESAR ÉNFASIS AZUL (TEXTO ENTRE ')
             procesada = procesada.replace(/'(.*?)'/g, (match, p1) => {
                 return `<span class="section-marker m-enfasis-azul">${p1.toUpperCase()}</span>`;
             });
@@ -1475,8 +1586,6 @@
         document.getElementById('viewAutor').innerText = c.autor ? "Autor: " + c.autor : "";
 
         const colorTiempo = getColorTiempo(c.tiempoLiturgico);
-        
-        // MODIFICACIÓN DE ETIQUETA NON LITURGICUM (AMARILLO CON LETRAS ROJAS)
         const badgeClassificatio = c.classificatio ? `<span style="background: ${c.classificatio === 'Liturgicum' ? '#2e7d32' : '#FFD700'}; color: ${c.classificatio === 'Liturgicum' ? 'white' : '#b71c1c'}; padding: 2px 8px; border-radius: 6px; font-size: 0.65rem; font-weight: bold; text-transform: uppercase; ${c.classificatio !== 'Liturgicum' ? 'border: 1px solid #b71c1c;' : ''}">${c.classificatio}</span>` : "";
         
         document.getElementById('viewMomentoBadge').innerHTML = `
