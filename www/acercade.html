@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Acerca de Graduale Nostrum</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -179,7 +180,8 @@
     </div>
 </div>
 
-<script>
+<script type="module" src="navegacion.js"></script>
+
     // Función para cargar el archivo MD
     async function loadMarkdown() {
         try {
@@ -196,10 +198,20 @@
         }
     }
 
+    // Manejar el botón de atrás del dispositivo usando Capacitor
+    function handleBackButton() {
+        App.addListener('backButton', () => {
+            // Cuando se presiona el botón físico, regresamos a la pantalla principal
+            window.location.assign('index.html');
+        });
+    }
+
     // Ejecutar al cargar la página
-    window.onload = loadMarkdown;
+    window.onload = function() {
+        loadMarkdown();
+        handleBackButton();
+    };
 </script>
 
 </body>
 </html>
-

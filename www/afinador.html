@@ -6,6 +6,7 @@
     <title>Afinador Imperial Pro | Master Voice Edition</title>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Inter:wght@300;400;600&family=JetBrains+Mono&display=swap" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+<script type="module" src="backbutton.js"></script>
     <style>
         :root {
             --primary: #1A1514; 
@@ -242,6 +243,7 @@
         <button class="btn-back" onclick="stopApp()">← CANCELAR</button>
     </div>
 </div>
+<script type="module" src="navegacion.js"></script>
 
 <script>
     let audioCtx, analyser, microphone, scriptNode;
@@ -253,7 +255,18 @@
 
     const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
-    window.onload = loadVocalProfile;
+    // Redirigir a index.html al presionar botón atrás físico
+    function handleHardwareBack() {
+        history.pushState(null, null, window.location.pathname);
+        window.addEventListener('popstate', function (event) {
+            window.location.assign('index.html');
+        });
+    }
+
+    window.onload = function() {
+        loadVocalProfile();
+        handleHardwareBack();
+    };
 
     async function initAndStart(mode) {
         await Tone.start();
