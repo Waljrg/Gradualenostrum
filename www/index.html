@@ -5182,3 +5182,26 @@ function inicializarFiltrosModal() {
     }
   });
 </script>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    // Verificamos si la aplicación corre bajo el entorno nativo de Capacitor
+    if (window.Capacitor && window.Capacitor.Plugins) {
+      const { App } = window.Capacitor.Plugins;
+
+      App.addListener('backButton', () => {
+        // Accedemos a tus variables globales de control de vistas
+        if (typeof viewStack !== 'undefined' && viewStack.length > 1) {
+          // Si el usuario tiene pantallas abiertas en el historial interno,
+          // simulamos exactamente tu función de regresar nativa:
+          viewStack.pop(); 
+          if (typeof estrofaCounter !== 'undefined') estrofaCounter = 1;
+          showView(viewStack[viewStack.length - 1], true);
+        } else {
+          // Si ya no hay vistas atrás en la pila (está en el menú principal), cerramos la app
+          App.exitApp();
+        }
+      });
+    }
+  });
+</script>
